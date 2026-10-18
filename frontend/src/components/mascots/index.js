@@ -1,0 +1,7 @@
+export { default as HappyMascot } from './HappyMascot.vue'
+export { default as FriendMascot1 } from './FriendMascot1.vue'
+export { default as FriendMascot2 } from './FriendMascot2.vue'
+export { default as FriendMascot3 } from './FriendMascot3.vue'
+export { default as FriendMascot4 } from './FriendMascot4.vue'
+export { default as FriendMascot5 } from './FriendMascot5.vue'
+export { default as FriendMascot6 } from './FriendMascot6.vue'
