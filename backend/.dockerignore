@@ -1,0 +1,11 @@
+target
+!.mvn/wrapper/maven-wrapper.jar
+!pom.xml
+node_modules
+.git
+.gitignore
+*.log
+.env
+.env.*
+*.md
+.DS_Store
