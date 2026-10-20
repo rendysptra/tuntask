@@ -391,13 +391,13 @@ const addTask = async () => {
       title: newTask.value.title,
       description: newTask.value.description || null,
       dueDate: newTask.value.dueDate || null,
-      priority: newTask.value.priority,
-      status: 'TODO'
+      priority: newTask.value.priority
     })
     newTask.value = { title: '', description: '', dueDate: '', priority: 'MEDIUM' }
     fetchTasks()
   } catch (error) {
     console.error('Error adding task:', error)
+    alert('Gagal menambahkan task: ' + (error.response?.data?.message || error.message))
   }
 }
 
