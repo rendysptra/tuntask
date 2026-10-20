@@ -3,8 +3,12 @@ import { useAuthStore } from '../stores/authStore'
 import { getAuthCookie } from '../utils/cookieUtils'
 import router from '../router'
 
+const getApiUrl = () => {
+  return import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1'
+}
+
 const apiClient = axios.create({
-  baseURL: 'http://localhost:8080/api/v1',
+  baseURL: getApiUrl(),
   withCredentials: false
 })
 
