@@ -1,3 +1,0 @@
-window.env = {
-  VITE_API_URL: '__VITE_API_URL__'
-}
