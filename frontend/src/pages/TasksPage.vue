@@ -281,7 +281,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/authStore'
 import { taskApi } from '../services/taskApi'
-import { HappyMascot, FriendMascot1, FriendMascot2, FriendMascot3, FriendMascot4, FriendMascot5, FriendMascot6 } from '../components/mascots'
+import { FriendMascot1, FriendMascot2, FriendMascot3, FriendMascot4, FriendMascot5, FriendMascot6 } from '../components/mascots'
 
 const router = useRouter()
 const authStore = useAuthStore()
