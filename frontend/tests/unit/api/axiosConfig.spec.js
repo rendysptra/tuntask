@@ -8,6 +8,8 @@ describe('axiosConfig', () => {
   beforeEach(async () => {
     vi.resetModules()
     
+    vi.stubEnv('VITE_API_URL', 'http://localhost:8080/api/v1')
+    
     mockAuthStore = {
       clearAuth: vi.fn()
     }
