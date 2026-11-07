@@ -10,7 +10,6 @@ import org.springframework.validation.annotation.Validated;
 public class JwtProperties {
     
     @NotBlank(message = "JWT_SECRET must be set")
-    @Size(min = 64, message = "JWT_SECRET must be at least 64 characters")
     private String secret;
     
     private long expiration = 86400000;

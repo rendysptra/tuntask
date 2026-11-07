@@ -30,9 +30,18 @@ public class TaskApplication {
 		validateNotBlank(System.getProperty("SPRING_DATASOURCE_URL", System.getProperty("DB_NAME")), 
 			"SPRING_DATASOURCE_URL or DB_NAME");
 		
+		// Validate JWT_SECRET is valid Base64 and has >= 64 bytes after decoding (HS512 requirement)
 		String jwtSecret = System.getProperty("JWT_SECRET");
-		if (jwtSecret != null && jwtSecret.trim().length() < 64) {
-			throw new IllegalStateException("FATAL: JWT_SECRET must be at least 64 characters, got " + jwtSecret.trim().length());
+		if (jwtSecret != null) {
+			String trimmed = jwtSecret.trim();
+			try {
+				byte[] decoded = java.util.Base64.getDecoder().decode(trimmed);
+				if (decoded.length < 64) {
+					throw new IllegalStateException("FATAL: JWT_SECRET must be at least 64 bytes after Base64 decode, got " + decoded.length + " bytes");
+				}
+			} catch (IllegalArgumentException e) {
+				throw new IllegalStateException("FATAL: JWT_SECRET is not valid Base64: " + e.getMessage());
+			}
 		}
 	}
 	
