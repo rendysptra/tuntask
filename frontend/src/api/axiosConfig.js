@@ -4,6 +4,11 @@ import { getAuthCookie } from '../utils/cookieUtils'
 import router from '../router'
 
 const getApiUrl = () => {
+  const runtimeUrl = window.env?.VITE_API_URL
+  const isPlaceholder = runtimeUrl && runtimeUrl.includes('__VITE_API_URL__')
+  if (runtimeUrl && !isPlaceholder) {
+    return runtimeUrl
+  }
   return import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1'
 }
 

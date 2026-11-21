@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 describe('axiosConfig', () => {
   let apiClient
@@ -9,6 +9,7 @@ describe('axiosConfig', () => {
     vi.resetModules()
     
     vi.stubEnv('VITE_API_URL', 'http://localhost:8080/api/v1')
+    delete window.env
     
     mockAuthStore = {
       clearAuth: vi.fn()
@@ -34,12 +35,58 @@ describe('axiosConfig', () => {
     apiClient = axiosModule.default
   })
 
+  afterEach(() => {
+    delete window.env
+  })
+
   it('creates axios instance with correct baseURL', () => {
     expect(apiClient.defaults.baseURL).toBe('http://localhost:8080/api/v1')
   })
 
+  it('uses window.env.VITE_API_URL if valid (not placeholder)', async () => {
+    window.env = { VITE_API_URL: 'http://runtime.test:8080/api/v1' }
+    vi.resetModules()
+    
+    const axiosModule = await import('@/api/axiosConfig')
+    const client = axiosModule.default
+    
+    expect(client.defaults.baseURL).toBe('http://runtime.test:8080/api/v1')
+  })
+
+  it('ignores window.env.VITE_API_URL if placeholder', async () => {
+    window.env = { VITE_API_URL: '__VITE_API_URL__' }
+    vi.resetModules()
+    
+    const axiosModule = await import('@/api/axiosConfig')
+    const client = axiosModule.default
+    
+    expect(client.defaults.baseURL).toBe('http://localhost:8080/api/v1')
+  })
+
+  it('falls to default when window.env missing and no build-time env', async () => {
+    vi.resetModules()
+    vi.stubEnv('VITE_API_URL', '')
+    delete window.env
+    
+    const axiosModule = await import('@/api/axiosConfig')
+    const client = axiosModule.default
+    
+    expect(client.defaults.baseURL).toBe('http://localhost:8080/api/v1')
+  })
+
   it('sets withCredentials to false', () => {
     expect(apiClient.defaults.withCredentials).toBe(false)
+  })
+
+  it('prioritizes window.env over build-time env', async () => {
+    window.env = { VITE_API_URL: 'http://runtime.override:9999/api/v1' }
+    vi.stubEnv('VITE_API_URL', 'http://buildtime:8080/api/v1')
+    vi.resetModules()
+    
+    const axiosModule = await import('@/api/axiosConfig')
+    const client = axiosModule.default
+    
+    expect(client.defaults.baseURL).toBe('http://runtime.override:9999/api/v1')
   })
 
   it('request interceptor adds Authorization header when token exists', async () => {
