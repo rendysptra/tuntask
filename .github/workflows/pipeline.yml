@@ -1,0 +1,44 @@
+# Pipeline CI/CD tuntask (pemicu tipis; isi ada di ci.yml dan cd.yml)
+#
+# Alur:
+#   pull request ke dev/main : CI saja (test backend + frontend)
+#   push ke dev              : CI -> CD ke STAGING
+#   push ke main             : CI -> CD ke PRODUCTION
+#   workflow_dispatch        : jalankan ulang pada branch dev/main yang dipilih
+#
+# Prasyarat GitHub (variabel, secret, environment) ada di komentar atas cd.yml.
+
+name: Pipeline
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+  workflow_dispatch:
+
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  cd:
+    name: CD
+    needs: ci
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+    uses: ./.github/workflows/cd.yml
+    # Pemanggil harus memberi izin id-token; workflow yang dipanggil tidak bisa menaikkannya sendiri
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      environment: ${{ github.ref_name == 'main' && 'production' || 'staging' }}
+      site_url: ${{ github.ref_name == 'main' && 'https://tuntask.tidera.dev' || 'https://staging.tuntask.tidera.dev' }}
+    secrets: inherit

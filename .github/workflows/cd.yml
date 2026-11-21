@@ -1,0 +1,212 @@
+# CD tuntask: build + push image ke Artifact Registry, lalu deploy ke VM.
+# Hanya bisa dipanggil (workflow_call) oleh pipeline.yml.
+#
+# Input:
+#   environment : "staging" atau "production" (juga nama GitHub Environment)
+#   site_url    : alamat publik untuk smoke test
+#
+# Yang dibutuhkan di GitHub (Settings > Secrets and variables > Actions):
+#   Variables (repo) : GCP_PROJECT_ID, WIF_PROVIDER, WIF_SERVICE_ACCOUNT
+#   Secrets   (repo) : GCP_HOST, GCP_USERNAME, GCP_SSH_KEY, GCP_KNOWN_HOSTS
+#   Environments     : "staging" dan "production", masing-masing berisi secret
+#                      ENV_FILE_CONTENT (isi file .env untuk environment itu)
+#
+# Kontrak dengan folder deploy/ di repo (ditulis terpisah):
+#   deploy/deploy.sh dijalankan di VM sebagai:
+#       ./deploy.sh <environment> <image_tag> <image_prefix>
+#   token Artifact Registry dikirim lewat stdin (satu baris), bukan argumen.
+#   Jika health check gagal, deploy.sh harus rollback sendiri lalu exit non-zero.
+
+name: CD
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'staging atau production'
+        type: string
+        required: true
+      site_url:
+        description: 'URL publik environment, dipakai untuk smoke test'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_PREFIX: asia-southeast2-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/tuntask
+
+jobs:
+  build-push:
+    name: Build dan push image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Login ke GCP (Workload Identity Federation)
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+          token_format: access_token
+
+      - name: Login ke Artifact Registry
+        uses: docker/login-action@v4
+        with:
+          registry: asia-southeast2-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Siapkan Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build dan push backend
+        uses: docker/build-push-action@v7
+        with:
+          context: ./backend
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/backend:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}/backend:${{ github.ref_name }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Build dan push frontend
+        uses: docker/build-push-action@v7
+        with:
+          context: ./frontend
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/frontend:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}/frontend:${{ github.ref_name }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  deploy:
+    name: Deploy (${{ inputs.environment }})
+    needs: build-push
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Satu VM dipakai bersama: deploy staging dan production tidak boleh berjalan bersamaan
+    concurrency:
+      group: deploy-single-vm
+      cancel-in-progress: false
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ inputs.site_url }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ENV_NAME: ${{ inputs.environment }}
+      SITE_URL: ${{ inputs.site_url }}
+    steps:
+      - name: Validasi input
+        run: |
+          case "$ENV_NAME" in
+            staging|production) ;;
+            *) echo "::error::environment harus staging atau production, bukan '$ENV_NAME'"; exit 1 ;;
+          esac
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Token sementara untuk docker pull di VM (tidak ada password registry di VM)
+      - name: Login ke GCP (Workload Identity Federation)
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+          token_format: access_token
+
+      - name: Siapkan SSH
+        env:
+          SSH_KEY: ${{ secrets.GCP_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.GCP_KNOWN_HOSTS }}
+          VM_HOST: ${{ secrets.GCP_HOST }}
+          VM_USER: ${{ secrets.GCP_USERNAME }}
+        run: |
+          if [ -z "$SSH_KEY" ] || [ -z "$KNOWN_HOSTS" ] || [ -z "$VM_HOST" ] || [ -z "$VM_USER" ]; then
+            echo "::error::Secret GCP_HOST, GCP_USERNAME, GCP_SSH_KEY, atau GCP_KNOWN_HOSTS belum diisi"
+            exit 1
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host deploy-vm
+            HostName $VM_HOST
+            User $VM_USER
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            ServerAliveInterval 15
+            ServerAliveCountMax 8
+          EOF
+
+      - name: Kirim folder deploy ke VM
+        run: |
+          tar -C deploy -czf - . | ssh deploy-vm "mkdir -p apps/${ENV_NAME} && tar -xzf - -C apps/${ENV_NAME}"
+
+      - name: Tulis file .env di VM
+        env:
+          ENV_FILE_CONTENT: ${{ secrets.ENV_FILE_CONTENT }}
+        run: |
+          if [ -z "$ENV_FILE_CONTENT" ]; then
+            echo "::error::Secret ENV_FILE_CONTENT di environment ${ENV_NAME} masih kosong"
+            exit 1
+          fi
+          printf '%s\n' "$ENV_FILE_CONTENT" | ssh deploy-vm "umask 077 && cat > apps/${ENV_NAME}/.env"
+
+      - name: Jalankan deploy di VM
+        env:
+          AR_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          printf '%s\n' "$AR_TOKEN" | ssh deploy-vm \
+            "cd apps/${ENV_NAME} && chmod +x deploy.sh && ./deploy.sh '${ENV_NAME}' '${GITHUB_SHA}' '${IMAGE_PREFIX}'"
+
+      - name: Smoke test dari internet
+        run: |
+          check() {
+            # $1 = path, $2 = kode HTTP yang diterima (dipisah spasi)
+            local code
+            for i in $(seq 1 12); do
+              code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "${SITE_URL}$1" || echo 000)
+              echo "GET $1 percobaan $i: HTTP $code"
+              for ok in $2; do
+                if [ "$code" = "$ok" ]; then return 0; fi
+              done
+              sleep 10
+            done
+            echo "::error::Smoke test $1 gagal, HTTP terakhir $code"
+            return 1
+          }
+          if [ "$ENV_NAME" = "production" ]; then
+            check "/" "200"
+          else
+            # staging dilindungi basic auth pada halaman web, jadi 401 juga dianggap sehat
+            check "/" "200 401"
+          fi
+          # /api harus sampai ke backend (ditolak JWT), bukan jatuh ke halaman frontend (200)
+          check "/api/v1/tasks" "401 403"
+
+      - name: Ringkasan
+        if: always()
+        run: |
+          {
+            echo "### Deploy ${ENV_NAME}"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- URL: ${SITE_URL}"
+            echo "- Status: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"
