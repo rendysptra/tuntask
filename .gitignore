@@ -8,3 +8,8 @@ target/
 .vscode/
 .idea/
 *.iml
+# Terraform
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.*
+infra/*.tfvars
